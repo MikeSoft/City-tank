@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Battle City MVP</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+
+        #gameContainer {
+            position: relative;
+            border: 2px solid #fff;
+        }
+
+        #gameCanvas {
+            display: block;
+            background: #333;
+        }
+
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: end;
+            pointer-events: none;
+        }
+
+        #joystick {
+            width: 120px;
+            height: 120px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            position: relative;
+            pointer-events: all;
+            touch-action: none;
+        }
+
+        #joystickKnob {
+            width: 40px;
+            height: 40px;
+            background: rgba(255,255,255,0.8);
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            transition: all 0.1s ease;
+        }
+
+        #shootButton {
+            width: 80px;
+            height: 80px;
+            background: rgba(255,0,0,0.7);
+            border-radius: 50%;
+            border: none;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            pointer-events: all;
+            touch-action: manipulation;
+        }
+
+        #shootButton:active {
+            background: rgba(255,0,0,1);
+            transform: scale(0.95);
+        }
+
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 14px;
+        }
+
+        @media (min-width: 768px) {
+            #controls {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="gameContainer">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <div id="ui">
+        <div>Jugadores: <span id="playerCount">0</span></div>
+        <div>FPS: <span id="fps">60</span></div>
+    </div>
+
+    <div id="controls">
+        <div id="joystick">
+            <div id="joystickKnob"></div>
+        </div>
+        <button id="shootButton">FIRE</button>
+    </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="audio.js"></script>
+<script src="controls.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

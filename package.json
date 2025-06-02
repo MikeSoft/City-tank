@@ -1,0 +1,41 @@
+{
+  "name": "battle-city-realtime-audio",
+  "version": "2.0.0",
+  "description": "Battle City multiplayer con audio en tiempo real",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "nodemon server/index.js",
+    "test": "node server/index.js",
+    "audio-test": "node scripts/audio-test.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "keywords": [
+    "game",
+    "multiplayer",
+    "battle-city",
+    "socket.io",
+    "realtime-audio",
+    "web-audio-api",
+    "voice-chat"
+  ],
+  "author": "Battle City Dev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tu-usuario/battle-city-realtime-audio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tu-usuario/battle-city-realtime-audio/issues"
+  },
+  "homepage": "https://github.com/tu-usuario/battle-city-realtime-audio#readme"
+}
