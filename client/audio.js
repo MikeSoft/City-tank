@@ -2,468 +2,466 @@ class AudioManager {
     constructor(socket) {
         this.socket = socket;
         this.audioContext = null;
+        this.mediaRecorder = null;
         this.microphone = null;
-        this.processor = null;
-        this.gainNode = null;
-
-        // Estado
+        this.isRecording = false;
         this.isInitialized = false;
+        this.audioChunks = [];
+        this.volume = 0.8; // Volumen de recepción
+        this.micVolume = 0.8; // Volumen del micrófono
+        this.isMuted = false; // Solo afecta transmisión, NO recepción
+        this.isPushToTalk = false;
         this.isTransmitting = false;
-        this.isMuted = false;
+        this.packetsReceived = 0;
+        this.packetsTransmitted = 0;
 
-        // Configuración de audio optimizada para tiempo real
-        this.sampleRate = 16000; // Reducir para menos latencia
-        this.bufferSize = 1024; // Buffer pequeño para baja latencia
-        this.channels = 1; // Mono para menos datos
+        // Referencias a elementos de UI
+        this.statusIndicator = null;
+        this.micButton = null;
 
-        // Control de volumen
-        this.micVolume = 1.0;
-        this.outputVolume = 1.0;
+        // Exponer globalmente para controles
+        window.audioManager = this;
 
-        // Buffer para audio entrante
-        this.audioQueue = [];
-        this.isPlaying = false;
-
-        // Auto inicializar
-        this.createAudioUI();
+        this.setupUI();
+        this.setupKeyboardControls();
         this.init();
     }
 
-    createAudioUI() {
-        const audioUI = document.createElement('div');
-        audioUI.id = 'audioUI';
-        audioUI.style.cssText = `
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: rgba(0,0,0,0.8);
-            color: white;
-            padding: 12px;
-            border-radius: 8px;
-            font-size: 12px;
-            z-index: 1000;
-            min-width: 200px;
-        `;
+    setupUI() {
+        // Referencias a elementos existentes
+        this.statusIndicator = document.querySelector('#audioStatus').parentElement.querySelector('.status-dot');
+        this.micButton = document.getElementById('toggleMic');
 
-        audioUI.innerHTML = `
-            <div style="margin-bottom: 8px; font-weight: bold;">🎙️ Audio Chat</div>
-            <div>Status: <span id="audioStatus">Inicializando...</span></div>
-            <div>Latencia: <span id="latency">-</span>ms</div>
-            <div style="margin: 8px 0;">
-                <button id="toggleMic" style="padding: 4px 8px; margin-right: 5px;">🎤 ON</button>
-                <button id="toggleMute" style="padding: 4px 8px;">🔊</button>
-            </div>
-            <div style="margin: 4px 0;">
-                <label>Mic: </label>
-                <input type="range" id="micVolume" min="0" max="2" step="0.1" value="1" style="width: 80px;">
-            </div>
-            <div style="margin: 4px 0;">
-                <label>Vol: </label>
-                <input type="range" id="outputVolume" min="0" max="2" step="0.1" value="1" style="width: 80px;">
-            </div>
-            <div id="audioDebug" style="margin-top: 8px; font-size: 10px; color: #ccc;"></div>
-        `;
-
-        document.getElementById('gameContainer').appendChild(audioUI);
-        this.setupUIEvents();
-    }
-
-    setupUIEvents() {
-        document.getElementById('toggleMic').addEventListener('click', () => {
+        // Event listeners para botones
+        this.micButton.addEventListener('click', () => {
             this.toggleMicrophone();
         });
 
-        document.getElementById('toggleMute').addEventListener('click', () => {
-            this.toggleMute();
+        document.getElementById('testAudio').addEventListener('click', () => {
+            this.testAudioOutput();
         });
 
-        document.getElementById('micVolume').addEventListener('input', (e) => {
-            this.micVolume = parseFloat(e.target.value);
-            if (this.gainNode) {
-                this.gainNode.gain.value = this.micVolume;
+        // Configurar sliders de volumen
+        const volumeSlider = document.getElementById('volumeSlider');
+        const micSlider = document.getElementById('micSlider');
+
+        if (volumeSlider) {
+            volumeSlider.value = this.volume * 100;
+            volumeSlider.addEventListener('input', (e) => {
+                this.setVolume(e.target.value / 100);
+                console.log('Volume set to:', this.volume);
+            });
+        }
+
+        if (micSlider) {
+            micSlider.value = this.micVolume * 100;
+            micSlider.addEventListener('input', (e) => {
+                this.setMicVolume(e.target.value / 100);
+                console.log('Mic volume set to:', this.micVolume);
+            });
+        }
+    }
+
+    setupKeyboardControls() {
+        document.addEventListener('keydown', (e) => {
+            switch (e.code) {
+                case 'KeyT':
+                    if (!e.repeat) this.toggleMicrophone();
+                    break;
+                case 'KeyV':
+                    if (!this.isPushToTalk && !e.repeat) {
+                        this.isPushToTalk = true;
+                        this.startTransmission();
+                        console.log('Push-to-talk started');
+                    }
+                    break;
+                case 'KeyM':
+                    if (!e.repeat) this.toggleMute();
+                    break;
             }
         });
 
-        document.getElementById('outputVolume').addEventListener('input', (e) => {
-            this.outputVolume = parseFloat(e.target.value);
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'KeyV' && this.isPushToTalk) {
+                this.isPushToTalk = false;
+                this.stopTransmission();
+                console.log('Push-to-talk ended');
+            }
         });
     }
 
     async init() {
         try {
-            this.updateStatus('Solicitando permisos...');
+            this.updateStatus('audioStatus', 'Solicitando permisos...');
+            this.setStatusColor('yellow');
 
-            // Verificar soporte del navegador
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                throw new Error('Tu navegador no soporta audio');
-            }
+            await this.setupAudioContext();
 
-            // Crear contexto de audio optimizado
-            this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                sampleRate: this.sampleRate,
-                latencyHint: 'interactive' // Priorizar baja latencia
-            });
-
-            // Reanudar contexto si está suspendido
-            await this.resumeAudioContext();
-
-            // Obtener micrófono con configuración optimizada
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
-                    autoGainControl: false, // Desactivar para control manual
-                    sampleRate: this.sampleRate,
-                    channelCount: this.channels,
-                    // Configuraciones adicionales para mejor calidad
-                    googEchoCancellation: true,
-                    googNoiseSuppression: true,
-                    googHighpassFilter: true
+                    autoGainControl: true,
+                    sampleRate: 48000
                 }
             });
 
             this.microphone = stream;
-            this.setupAudioProcessing();
+            this.updateStatus('micStatus', 'Disponible');
+
+            this.setupMediaRecorder();
             this.setupSocketEvents();
 
             this.isInitialized = true;
-            this.updateStatus('✅ Conectado');
+            this.updateStatus('audioStatus', 'Listo ✓');
+            this.setStatusColor('green');
 
-            // AUTOMÁTICAMENTE activar transmisión
-            this.startTransmitting();
+            // Actualizar botón y empezar transmisión automática
+            this.isTransmitting = true;
+            this.updateMicButton();
 
-            // Notificar al servidor que el audio está activo
-            this.socket.emit('audioStateChanged', {enabled: true});
-
-            console.log('✅ Audio inicializado y transmitiendo automáticamente');
-
-        } catch (error) {
-            console.error('Error inicializando audio:', error);
-            this.handleAudioError(error);
-        }
-    }
-
-    handleAudioError(error) {
-        let errorMessage = 'Error desconocido';
-
-        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-            errorMessage = 'Permiso de micrófono denegado. Activa el micrófono en la configuración del navegador.';
-        } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-            errorMessage = 'No se encontró micrófono. Conecta un micrófono y recarga la página.';
-        } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
-            errorMessage = 'El micrófono está siendo usado por otra aplicación.';
-        } else if (error.name === 'OverconstrainedError') {
-            errorMessage = 'Configuración de audio no soportada por tu dispositivo.';
-        } else {
-            errorMessage = error.message || 'Error de audio';
-        }
-
-        this.updateStatus('❌ Error: ' + errorMessage);
-
-        // Mostrar botón para reintentar
-        this.showRetryButton();
-    }
-
-    showRetryButton() {
-        const retryBtn = document.createElement('button');
-        retryBtn.textContent = '🔄 Reintentar';
-        retryBtn.style.cssText = `
-            background: #4CAF50;
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            border-radius: 4px;
-            cursor: pointer;
-            margin-top: 5px;
-        `;
-
-        retryBtn.onclick = () => {
-            retryBtn.remove();
-            this.init();
-        };
-
-        document.getElementById('audioUI').appendChild(retryBtn);
-    }
-
-    async resumeAudioContext() {
-        if (this.audioContext.state === 'suspended') {
-            try {
-                await this.audioContext.resume();
-                console.log('✅ Contexto de audio reanudado');
-            } catch (error) {
-                console.error('Error reanudando contexto:', error);
-                // El contexto se reanudará automáticamente con la primera interacción
-            }
-        }
-    }
-
-    setupAudioProcessing() {
-        try {
-            // Crear cadena de procesamiento de audio
-            const source = this.audioContext.createMediaStreamSource(this.microphone);
-            this.gainNode = this.audioContext.createGain();
-            this.gainNode.gain.value = this.micVolume;
-
-            // Crear filtro pasa-altos para eliminar ruido de baja frecuencia
-            const highPassFilter = this.audioContext.createBiquadFilter();
-            highPassFilter.type = 'highpass';
-            highPassFilter.frequency.value = 300; // Eliminar frecuencias por debajo de 300Hz
-
-            // Usar ScriptProcessorNode para compatibilidad
-            this.processor = this.audioContext.createScriptProcessor(this.bufferSize, this.channels, this.channels);
-
-            // Conectar cadena de audio
-            source.connect(highPassFilter);
-            highPassFilter.connect(this.gainNode);
-            this.gainNode.connect(this.processor);
-
-            // Procesar audio en tiempo real
-            this.processor.onaudioprocess = (event) => {
-                if (!this.isTransmitting || this.isMuted) return;
-
-                const inputData = event.inputBuffer.getChannelData(0);
-
-                // Detectar silencio para no enviar audio innecesario
-                const volume = this.calculateRMS(inputData);
-                if (volume < 0.01) { // Umbral de silencio
-                    return;
-                }
-
-                const audioData = new Float32Array(inputData);
-                this.sendAudioData(audioData);
-            };
-
-            // IMPORTANTE: Conectar a destination para evitar que se optimice
-            this.processor.connect(this.audioContext.destination);
+            console.log('✅ Audio inicializado correctamente');
+            console.log('🎧 Volumen de recepción:', this.volume);
+            console.log('🎤 Volumen de micrófono:', this.micVolume);
 
         } catch (error) {
-            console.error('Error configurando procesamiento:', error);
-            this.updateStatus('❌ Error de procesamiento');
+            console.error('❌ Error al acceder al micrófono:', error);
+            this.updateStatus('audioStatus', 'Error: ' + error.message);
+            this.setStatusColor('red');
         }
     }
 
-    // Calcular RMS (volumen) del audio
-    calculateRMS(audioData) {
-        let sum = 0;
-        for (let i = 0; i < audioData.length; i++) {
-            sum += audioData[i] * audioData[i];
-        }
-        return Math.sqrt(sum / audioData.length);
-    }
-
-    sendAudioData(audioData) {
+    async setupAudioContext() {
         try {
-            // Comprimir datos para reducir ancho de banda
-            const compressedData = this.compressAudio(audioData);
-
-            // Enviar via socket con timestamp para medir latencia
-            this.socket.emit('audioStream', {
-                data: Array.from(compressedData), // Convertir a array para JSON
-                timestamp: Date.now(),
-                sampleRate: this.sampleRate
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                sampleRate: 48000,
+                latencyHint: 'interactive'
             });
 
+            if (this.audioContext.state === 'suspended') {
+                this.updateStatus('contextState', 'Suspendido - Click para activar');
+
+                const resumeContext = async () => {
+                    if (this.audioContext.state === 'suspended') {
+                        await this.audioContext.resume();
+                        this.updateStatus('contextState', 'Activo ✓');
+                        console.log('🔊 AudioContext resumed');
+                        document.removeEventListener('touchstart', resumeContext);
+                        document.removeEventListener('click', resumeContext);
+                    }
+                };
+
+                document.addEventListener('touchstart', resumeContext, {once: true});
+                document.addEventListener('click', resumeContext, {once: true});
+            } else {
+                this.updateStatus('contextState', 'Activo ✓');
+            }
+
         } catch (error) {
-            console.error('Error enviando audio:', error);
+            console.error('❌ Error al crear AudioContext:', error);
+            throw error;
         }
     }
 
-    compressAudio(audioData) {
-        // Conversión simple a Int16 para reducir tamaño (de Float32 a Int16)
-        const compressed = new Int16Array(audioData.length);
-        for (let i = 0; i < audioData.length; i++) {
-            // Convertir de [-1, 1] a [-32768, 32767]
-            compressed[i] = Math.max(-32768, Math.min(32767, audioData[i] * 32767));
+    setupMediaRecorder() {
+        if (!this.microphone) return;
+
+        try {
+            const mimeTypes = [
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/mp4',
+                'audio/ogg;codecs=opus'
+            ];
+
+            let selectedMimeType = null;
+            for (const mimeType of mimeTypes) {
+                if (MediaRecorder.isTypeSupported(mimeType)) {
+                    selectedMimeType = mimeType;
+                    break;
+                }
+            }
+
+            if (!selectedMimeType) {
+                throw new Error('No supported audio format found');
+            }
+
+            console.log('🎵 Using audio format:', selectedMimeType);
+
+            this.mediaRecorder = new MediaRecorder(this.microphone, {
+                mimeType: selectedMimeType,
+                audioBitsPerSecond: 64000
+            });
+
+            this.mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0 && this.isTransmitting && !this.isMuted) {
+                    this.audioChunks.push(event.data);
+                    this.sendAudioChunk(event.data);
+                    this.packetsTransmitted++;
+                    this.updatePacketCount();
+                }
+            };
+
+            this.mediaRecorder.onstart = () => {
+                this.updateStatus('micStatus', '🔴 Grabando');
+                this.setMicButtonRecording(true);
+                console.log('🎙️ MediaRecorder started');
+            };
+
+            this.mediaRecorder.onstop = () => {
+                this.updateStatus('micStatus', '⏹️ Detenido');
+                this.setMicButtonRecording(false);
+                console.log('🛑 MediaRecorder stopped');
+            };
+
+            this.mediaRecorder.onerror = (event) => {
+                console.error('❌ MediaRecorder error:', event.error);
+                this.updateStatus('micStatus', 'Error: ' + event.error.message);
+            };
+
+            // Iniciar grabación automáticamente
+            this.startRecording();
+
+        } catch (error) {
+            console.error('❌ Error al configurar MediaRecorder:', error);
+            this.updateStatus('micStatus', 'Error: ' + error.message);
         }
-        return compressed;
     }
 
-    decompressAudio(compressedData) {
-        // Convertir de Int16 de vuelta a Float32
-        const decompressed = new Float32Array(compressedData.length);
-        for (let i = 0; i < compressedData.length; i++) {
-            // Convertir de [-32768, 32767] a [-1, 1]
-            decompressed[i] = compressedData[i] / 32767;
+    startRecording() {
+        if (this.mediaRecorder && this.mediaRecorder.state === 'inactive') {
+            this.mediaRecorder.start(200);
+            this.isRecording = true;
+            console.log('▶️ Recording started');
         }
-        return decompressed;
+    }
+
+    stopRecording() {
+        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+            this.mediaRecorder.stop();
+            this.isRecording = false;
+            this.isTransmitting = false;
+            console.log('⏹️ Recording stopped');
+        }
+    }
+
+    toggleMicrophone() {
+        if (this.isRecording) {
+            this.stopRecording();
+        } else {
+            this.startRecording();
+            this.isTransmitting = true;
+        }
+        this.updateMicButton();
+        console.log('🎤 Microphone toggled. Recording:', this.isRecording, 'Transmitting:', this.isTransmitting);
+    }
+
+    startTransmission() {
+        this.isTransmitting = true;
+        this.setMicButtonRecording(true);
+    }
+
+    stopTransmission() {
+        this.isTransmitting = false;
+        this.setMicButtonRecording(false);
+    }
+
+    toggleMute() {
+        this.isMuted = !this.isMuted;
+        this.updateMicButton();
+        console.log('🔇 Mute toggled:', this.isMuted);
+    }
+
+    setVolume(volume) {
+        this.volume = Math.max(0, Math.min(1, volume));
+        console.log('🔊 Volume set to:', this.volume);
+    }
+
+    setMicVolume(volume) {
+        this.micVolume = Math.max(0, Math.min(1, volume));
+        console.log('🎙️ Mic volume set to:', this.micVolume);
+    }
+
+    async sendAudioChunk(audioBlob) {
+        if (this.isMuted) {
+            console.log('🔇 Audio muted, not sending');
+            return;
+        }
+
+        try {
+            const arrayBuffer = await audioBlob.arrayBuffer();
+            this.socket.emit('audioData', arrayBuffer);
+            console.log('📤 Audio chunk sent, size:', arrayBuffer.byteLength);
+        } catch (error) {
+            console.error('❌ Error al enviar audio:', error);
+        }
     }
 
     setupSocketEvents() {
-        this.socket.on('audioStream', (data) => {
-            // Calcular latencia si hay timestamp
-            if (data.timestamp) {
-                const latency = Date.now() - data.timestamp;
-                document.getElementById('latency').textContent = latency;
-            }
-
-            // Reproducir audio inmediatamente
-            this.playAudioStream(data);
+        this.socket.on('audioData', (data) => {
+            console.log('📥 Audio data received from server');
+            this.packetsReceived++;
+            this.playAudio(data.audio);
         });
 
-        // Debug de paquetes de audio
-        let audioPackets = 0;
-        setInterval(() => {
-            const debugElement = document.getElementById('audioDebug');
-            if (debugElement) {
-                debugElement.textContent = `Packets/s: ${audioPackets}`;
-            }
-            audioPackets = 0;
-        }, 1000);
+        // Debug adicional
+        this.socket.on('connect', () => {
+            console.log('🌐 Connected to server for audio');
+        });
 
-        this.socket.on('audioStream', () => {
-            audioPackets++;
+        this.socket.on('disconnect', () => {
+            console.log('🔌 Disconnected from server');
         });
     }
 
-    async playAudioStream(audioData) {
+    async playAudio(audioData) {
+        console.log('🔊 Attempting to play audio, volume:', this.volume);
+
+        if (!this.audioContext) {
+            console.error('❌ AudioContext no disponible');
+            return;
+        }
+
+        // NUNCA bloquear por mute en la recepción
+        if (this.audioContext.state === 'suspended') {
+            try {
+                await this.audioContext.resume();
+                this.updateStatus('contextState', 'Activo ✓');
+                console.log('🔊 AudioContext resumed for playback');
+            } catch (error) {
+                console.error('❌ Error al reanudar AudioContext:', error);
+                return;
+            }
+        }
+
         try {
-            if (!this.audioContext || this.audioContext.state !== 'running') {
-                // Intentar reanudar el contexto
-                if (this.audioContext.state === 'suspended') {
-                    await this.audioContext.resume();
-                }
-                return;
-            }
+            console.log('🎵 Decoding audio data, size:', audioData.byteLength);
+            const audioBuffer = await this.audioContext.decodeAudioData(audioData.slice(0));
 
-            // Asegurar que tenemos datos válidos
-            if (!audioData.data || audioData.data.length === 0) {
-                return;
-            }
-
-            // Descomprimir datos
-            const compressedArray = Array.isArray(audioData.data) ?
-                new Int16Array(audioData.data) :
-                new Int16Array(audioData.data);
-
-            const decompressedData = this.decompressAudio(compressedArray);
-
-            // Crear buffer de audio
-            const audioBuffer = this.audioContext.createBuffer(
-                this.channels,
-                decompressedData.length,
-                audioData.sampleRate || this.sampleRate
-            );
-
-            // Copiar datos al buffer
-            audioBuffer.getChannelData(0).set(decompressedData);
-
-            // Crear fuente y reproducir
             const source = this.audioContext.createBufferSource();
             const gainNode = this.audioContext.createGain();
 
-            gainNode.gain.value = this.outputVolume;
+            // Asegurar que el volumen se aplique correctamente
+            gainNode.gain.value = this.volume;
 
             source.buffer = audioBuffer;
             source.connect(gainNode);
             gainNode.connect(this.audioContext.destination);
 
-            // Reproducir inmediatamente para mínima latencia
-            source.start(0);
+            source.start();
+
+            console.log('✅ Audio playing successfully, duration:', audioBuffer.duration, 'volume:', this.volume);
 
         } catch (error) {
-            console.error('Error reproduciendo audio:', error);
+            console.error('❌ Error al reproducir audio:', error);
+            console.log('🔄 Trying fallback method...');
+            this.playAudioFallback(audioData);
         }
     }
 
-    startTransmitting() {
-        if (!this.isInitialized) {
-            console.warn('Audio no inicializado');
+    async playAudioFallback(audioData) {
+        try {
+            console.log('🔄 Using fallback audio method');
+            const blob = new Blob([audioData], {type: 'audio/webm'});
+            const audioUrl = URL.createObjectURL(blob);
+            const audio = new Audio(audioUrl);
+
+            audio.volume = this.volume;
+            await audio.play();
+
+            audio.addEventListener('ended', () => {
+                URL.revokeObjectURL(audioUrl);
+            });
+
+            console.log('✅ Fallback audio playing');
+
+        } catch (error) {
+            console.error('❌ Error en método fallback:', error);
+        }
+    }
+
+    testAudioOutput() {
+        console.log('🧪 Testing audio output...');
+        if (!this.audioContext) {
+            console.log('❌ No AudioContext for test');
             return;
         }
 
-        this.isTransmitting = true;
-        this.updateMicButton();
-        this.updateStatus('🔴 Transmitiendo');
+        const oscillator = this.audioContext.createOscillator();
+        const gainNode = this.audioContext.createGain();
 
-        // Notificar al servidor
-        this.socket.emit('audioStateChanged', {enabled: true});
+        oscillator.connect(gainNode);
+        gainNode.connect(this.audioContext.destination);
 
-        console.log('🎤 Micrófono activado');
+        oscillator.frequency.value = 440;
+        gainNode.gain.value = this.volume * 0.3; // Tono de prueba más suave
+
+        oscillator.start();
+        oscillator.stop(this.audioContext.currentTime + 0.5);
+
+        console.log('🔊 Test tone played at volume:', this.volume * 0.3);
     }
 
-    stopTransmitting() {
-        this.isTransmitting = false;
-        this.updateMicButton();
-        this.updateStatus('⏸️ Pausado');
-
-        // Notificar al servidor
-        this.socket.emit('audioStateChanged', {enabled: false});
-
-        console.log('🎤 Micrófono desactivado');
-    }
-
-    toggleMicrophone() {
-        if (this.isTransmitting) {
-            this.stopTransmitting();
-        } else {
-            this.startTransmitting();
-        }
-    }
-
-    toggleMute() {
-        this.isMuted = !this.isMuted;
-        const button = document.getElementById('toggleMute');
-        if (button) {
-            button.textContent = this.isMuted ? '🔇' : '🔊';
-        }
-
-        if (this.isMuted) {
-            this.updateStatus('🔇 Silenciado');
-        } else if (this.isTransmitting) {
-            this.updateStatus('🔴 Transmitiendo');
-        }
-
-        console.log(this.isMuted ? '🔇 Audio silenciado' : '🔊 Audio activado');
-    }
-
-    updateMicButton() {
-        const button = document.getElementById('toggleMic');
-        if (button) {
-            button.textContent = this.isTransmitting ? '🎤 ON' : '🎤 OFF';
-            button.style.background = this.isTransmitting ? '#4CAF50' : '#f44336';
-            button.style.color = 'white';
-        }
-    }
-
-    updateStatus(status) {
-        const element = document.getElementById('audioStatus');
+    // Métodos de UI
+    updateStatus(elementId, status) {
+        const element = document.getElementById(elementId);
         if (element) {
             element.textContent = status;
         }
-        console.log('🎙️ Audio Status:', status);
     }
 
-    // Limpiar recursos al salir
-    destroy() {
-        console.log('🧹 Limpiando recursos de audio...');
-
-        this.isTransmitting = false;
-
-        if (this.processor) {
-            this.processor.disconnect();
-            this.processor = null;
+    setStatusColor(color) {
+        if (this.statusIndicator) {
+            this.statusIndicator.className = `status-dot ${color}`;
         }
+    }
 
-        if (this.gainNode) {
-            this.gainNode.disconnect();
+    updateMicButton() {
+        if (!this.micButton) return;
+
+        if (this.isMuted) {
+            this.micButton.textContent = '🔇';
+            this.micButton.className = 'audio-btn secondary';
+            this.micButton.title = 'Micrófono silenciado (M para activar)';
+        } else if (this.isRecording && this.isTransmitting) {
+            this.micButton.textContent = '🎙️';
+            this.micButton.className = 'audio-btn primary';
+            this.micButton.title = 'Micrófono activo';
+        } else {
+            this.micButton.textContent = '🎤';
+            this.micButton.className = 'audio-btn secondary';
+            this.micButton.title = 'Micrófono inactivo';
+        }
+    }
+
+    setMicButtonRecording(recording) {
+        if (recording) {
+            this.micButton.classList.add('recording');
+        } else {
+            this.micButton.classList.remove('recording');
+        }
+    }
+
+    updatePacketCount() {
+        const packetsElement = document.getElementById('packets');
+        if (packetsElement) {
+            packetsElement.textContent = `📤${this.packetsTransmitted} 📥${this.packetsReceived}`;
+        }
+    }
+
+    destroy() {
+        console.log('🧹 Cleaning up audio manager...');
+
+        if (this.mediaRecorder && this.isRecording) {
+            this.mediaRecorder.stop();
         }
 
         if (this.microphone) {
-            this.microphone.getTracks().forEach(track => {
-                track.stop();
-                console.log('🛑 Track detenido:', track.kind);
-            });
+            this.microphone.getTracks().forEach(track => track.stop());
         }
 
         if (this.audioContext && this.audioContext.state !== 'closed') {
             this.audioContext.close();
         }
-
-        const audioUI = document.getElementById('audioUI');
-        if (audioUI) {
-            audioUI.remove();
-        }
-
-        console.log('✅ Recursos de audio limpiados');
     }
 }

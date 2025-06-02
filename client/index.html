@@ -2,383 +2,476 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Battle City con Chat de Voz</title>
-    <meta name="description" content="Juego Battle City multijugador con chat de voz en tiempo real">
-
-    <!-- Favicon para que se vea más profesional -->
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Battle City MVP</title>
     <style>
         * {
+            margin: 0;
+            padding: 0;
             box-sizing: border-box;
         }
 
         body {
-            margin: 0;
-            padding: 0;
-            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            font-family: 'Arial', sans-serif;
+            background: #111;
+            font-family: Arial, sans-serif;
             overflow: hidden;
-            user-select: none;
+            position: fixed;
+            width: 100%;
+            height: 100%;
         }
 
         #gameContainer {
             position: relative;
-            border: 3px solid #444;
-            border-radius: 10px;
-            box-shadow: 0 0 30px rgba(0,255,0,0.3);
-            background: #000;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
         }
 
         #gameCanvas {
+            flex: 1;
             display: block;
-            background: #1a1a1a;
-            border-radius: 7px;
+            background: #333;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
         }
 
-        #controls {
+        /* UI Superior */
+        #topUI {
             position: absolute;
-            bottom: 20px;
-            left: 20px;
-            right: 20px;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background: linear-gradient(180deg, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0.4) 70%, transparent 100%);
             display: flex;
             justify-content: space-between;
-            align-items: end;
+            align-items: flex-start;
+            padding: 10px 15px;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        #gameInfo {
+            color: white;
+            font-size: 14px;
+            pointer-events: none;
+        }
+
+        #gameInfo div {
+            margin-bottom: 2px;
+        }
+
+        /* Panel de Audio - Fuera del juego */
+        #audioPanel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 11px;
+            min-width: 180px;
+            z-index: 1001;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            pointer-events: all;
+        }
+
+        #audioPanel h3 {
+            margin: 0 0 8px 0;
+            font-size: 12px;
+            color: #4CAF50;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .audio-status {
+            display: flex;
+            justify-content: space-between;
+            margin: 4px 0;
+        }
+
+        .audio-controls {
+            display: flex;
+            gap: 5px;
+            margin-top: 8px;
+        }
+
+        .audio-btn {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            font-size: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .audio-btn.primary {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .audio-btn.secondary {
+            background: #666;
+            color: white;
+        }
+
+        .audio-btn:hover {
+            transform: scale(0.95);
+        }
+
+        .volume-control {
+            margin: 6px 0;
+        }
+
+        .volume-slider {
+            width: 100%;
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+            appearance: none;
+        }
+
+        .volume-slider::-webkit-slider-thumb {
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #4CAF50;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        /* Controles Móviles */
+        #mobileControls {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 140px;
+            background: linear-gradient(0deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.3) 50%, transparent 100%);
+            display: none;
+            justify-content: space-between;
+            align-items: flex-end;
+            padding: 20px;
+            z-index: 999;
             pointer-events: none;
         }
 
         #joystick {
-            width: 120px;
-            height: 120px;
-            background: rgba(255,255,255,0.15);
-            border: 2px solid rgba(255,255,255,0.3);
+            width: 100px;
+            height: 100px;
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.3);
             border-radius: 50%;
             position: relative;
             pointer-events: all;
             touch-action: none;
-            backdrop-filter: blur(10px);
         }
 
         #joystickKnob {
-            width: 40px;
-            height: 40px;
-            background: rgba(0,255,0,0.8);
-            border: 2px solid rgba(255,255,255,0.5);
+            width: 35px;
+            height: 35px;
+            background: rgba(255, 255, 255, 0.8);
             border-radius: 50%;
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
             transition: all 0.1s ease;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
         }
 
         #shootButton {
-            width: 80px;
-            height: 80px;
-            background: linear-gradient(135deg, rgba(255,0,0,0.8) 0%, rgba(255,100,100,0.8) 100%);
-            border: 2px solid rgba(255,255,255,0.3);
+            width: 70px;
+            height: 70px;
+            background: linear-gradient(145deg, #ff4444, #cc0000);
+            border: none;
             border-radius: 50%;
             color: white;
-            font-size: 14px;
+            font-size: 12px;
             font-weight: bold;
             cursor: pointer;
             pointer-events: all;
             touch-action: manipulation;
-            backdrop-filter: blur(10px);
-            box-shadow: 0 4px 15px rgba(255,0,0,0.3);
+            box-shadow: 0 4px 15px rgba(255, 0, 0, 0.3);
             transition: all 0.1s ease;
         }
 
         #shootButton:active {
-            background: linear-gradient(135deg, rgba(255,0,0,1) 0%, rgba(255,50,50,1) 100%);
-            transform: scale(0.95);
-            box-shadow: 0 2px 8px rgba(255,0,0,0.5);
+            transform: scale(0.9);
+            box-shadow: 0 2px 8px rgba(255, 0, 0, 0.5);
         }
 
-        #ui {
-            position: absolute;
-            top: 15px;
-            left: 15px;
-            color: white;
-            font-size: 14px;
-            background: rgba(0,0,0,0.6);
-            padding: 10px;
-            border-radius: 8px;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.1);
-        }
-
-        #ui div {
-            margin: 2px 0;
-        }
-
-        /* Notificación de bienvenida */
-        #welcomeNotification {
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: linear-gradient(135deg, rgba(0,150,0,0.95) 0%, rgba(0,200,0,0.95) 100%);
-            color: white;
-            padding: 15px 25px;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: bold;
-            z-index: 9999;
-            box-shadow: 0 4px 20px rgba(0,150,0,0.4);
-            border: 1px solid rgba(255,255,255,0.2);
-            backdrop-filter: blur(10px);
-            opacity: 0;
-            animation: slideDown 0.5s ease forwards;
-        }
-
-        @keyframes slideDown {
-            from {
-                opacity: 0;
-                transform: translateX(-50%) translateY(-20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateX(-50%) translateY(0);
-            }
-        }
-
-        /* Indicador de carga */
-        #loadingIndicator {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(0,0,0,0.9);
-            color: white;
-            padding: 30px;
-            border-radius: 15px;
-            text-align: center;
-            z-index: 10000;
-            border: 2px solid rgba(0,255,0,0.3);
-        }
-
-        .spinner {
-            border: 3px solid rgba(255,255,255,0.3);
-            border-radius: 50%;
-            border-top: 3px solid #00ff00;
-            width: 30px;
-            height: 30px;
-            animation: spin 1s linear infinite;
-            margin: 10px auto;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        /* Responsive para móviles */
-        @media (max-width: 768px) {
-            #gameContainer {
-                margin: 10px;
-                border-radius: 5px;
-            }
-
-            #gameCanvas {
-                max-width: 100vw;
-                max-height: 100vh;
-                width: auto;
-                height: auto;
-            }
-        }
-
-        @media (min-width: 769px) {
-            #controls {
-                display: none;
-            }
-        }
-
-        /* Ocultar controles en pantallas grandes */
-        @media (min-width: 768px) {
-            #controls {
-                display: none;
-            }
-        }
-
-        /* Estilos para mensajes de error */
-        .error-message {
-            background: linear-gradient(135deg, rgba(255,0,0,0.9) 0%, rgba(255,100,100,0.9) 100%);
-            border: 1px solid rgba(255,255,255,0.2);
-            backdrop-filter: blur(10px);
-        }
-
-        .success-message {
-            background: linear-gradient(135deg, rgba(0,200,0,0.9) 0%, rgba(50,255,50,0.9) 100%);
-            border: 1px solid rgba(255,255,255,0.2);
-            backdrop-filter: blur(10px);
-        }
-
-        /* Botón de pantalla completa */
+        /* Botón Fullscreen */
         #fullscreenBtn {
             position: absolute;
             top: 15px;
-            right: 15px;
-            background: rgba(0,0,0,0.6);
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.3);
             color: white;
-            border: 1px solid rgba(255,255,255,0.2);
-            padding: 8px;
-            border-radius: 5px;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 12px;
             cursor: pointer;
-            font-size: 16px;
-            backdrop-filter: blur(10px);
-            transition: all 0.2s ease;
+            z-index: 1002;
+            backdrop-filter: blur(5px);
+            transition: all 0.2s;
         }
 
         #fullscreenBtn:hover {
-            background: rgba(0,0,0,0.8);
-            transform: scale(1.05);
+            background: rgba(0, 0, 0, 0.9);
+            transform: translateX(-50%) scale(1.05);
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            #mobileControls {
+                display: flex;
+            }
+
+            #audioPanel {
+                top: 70px;
+                right: 10px;
+                font-size: 10px;
+                min-width: 160px;
+                padding: 10px;
+            }
+
+            #topUI {
+                height: 50px;
+                padding: 8px 12px;
+            }
+
+            #gameInfo {
+                font-size: 12px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            #audioPanel {
+                top: 60px;
+                right: 5px;
+                left: 5px;
+                min-width: auto;
+            }
+
+            #audioPanel h3 {
+                font-size: 11px;
+            }
+
+            .audio-btn {
+                padding: 3px 6px;
+                font-size: 9px;
+            }
+        }
+
+        /* Pantalla completa */
+        #gameContainer:-webkit-full-screen {
+            background: #111;
+        }
+
+        #gameContainer:-moz-full-screen {
+            background: #111;
+        }
+
+        #gameContainer:fullscreen {
+            background: #111;
+        }
+
+        /* Animaciones */
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.7;
+            }
+        }
+
+        .recording {
+            animation: pulse 1s infinite;
+        }
+
+        /* Status indicators */
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+
+        .status-dot.green {
+            background: #4CAF50;
+        }
+
+        .status-dot.red {
+            background: #f44336;
+        }
+
+        .status-dot.yellow {
+            background: #ff9800;
         }
     </style>
 </head>
 <body>
-<!-- Indicador de carga inicial -->
-<div id="loadingIndicator">
-    <div class="spinner"></div>
-    <div>Cargando Battle City...</div>
-    <div style="font-size: 12px; margin-top: 10px;">Conectando al servidor</div>
-</div>
-
 <div id="gameContainer">
-    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <canvas id="gameCanvas"></canvas>
 
-    <!-- Botón de pantalla completa -->
-    <button id="fullscreenBtn" title="Pantalla completa">🔳</button>
-
-    <!-- UI del juego -->
-    <div id="ui">
-        <div><strong>🎮 Battle City</strong></div>
-        <div>Jugadores: <span id="playerCount">0</span></div>
-        <div>FPS: <span id="fps">60</span></div>
+    <!-- UI Superior -->
+    <div id="topUI">
+        <div id="gameInfo">
+            <div>🎮 <strong>Battle City</strong></div>
+            <div>👥 Jugadores: <span id="playerCount">0</span></div>
+            <div>⚡ FPS: <span id="fps">60</span></div>
+        </div>
     </div>
 
-    <!-- Controles móviles -->
-    <div id="controls">
+    <!-- Botón Fullscreen -->
+    <button id="fullscreenBtn" onclick="toggleFullscreen()">🔳 Pantalla Completa</button>
+
+    <!-- Panel de Audio (Fuera del juego) -->
+    <div id="audioPanel">
+        <h3>🎤 Audio Chat</h3>
+
+        <div class="audio-status">
+            <span>Estado:</span>
+            <span><span class="status-dot red"></span><span id="audioStatus">Inicializando...</span></span>
+        </div>
+
+        <div class="audio-status">
+            <span>Micrófono:</span>
+            <span id="micStatus">Off</span>
+        </div>
+
+        <div class="audio-status">
+            <span>Contexto:</span>
+            <span id="contextState">Unknown</span>
+        </div>
+
+        <div class="volume-control">
+            <label>🔊 Volumen:</label>
+            <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="80">
+        </div>
+
+        <div class="volume-control">
+            <label>🎙️ Micrófono:</label>
+            <input type="range" class="volume-slider" id="micSlider" min="0" max="100" value="80">
+        </div>
+
+        <div class="audio-controls">
+            <button class="audio-btn primary" id="toggleMic">🎙️</button>
+            <button class="audio-btn secondary" id="testAudio">🔊</button>
+            <button class="audio-btn secondary" id="togglePanel">📱</button>
+        </div>
+
+        <div class="audio-status">
+            <span>Latencia:</span>
+            <span id="latency">-205ms</span>
+        </div>
+
+        <div class="audio-status">
+            <span>Packets:</span>
+            <span id="packets">0</span>
+        </div>
+    </div>
+
+    <!-- Controles Móviles -->
+    <div id="mobileControls">
         <div id="joystick">
             <div id="joystickKnob"></div>
         </div>
         <button id="shootButton">🔥<br>FIRE</button>
     </div>
+
+    <!-- Instrucciones para PC -->
+    <div id="pcControls"
+         style="position: absolute; bottom: 10px; left: 10px; color: rgba(255,255,255,0.7); font-size: 11px; z-index: 999;">
+        <div><strong>Controles PC:</strong></div>
+        <div>WASD/Flechas: Mover</div>
+        <div>Espacio: Disparar</div>
+        <div>T: Toggle Micrófono</div>
+        <div>V: Push-to-Talk</div>
+        <div>M: Mute/Unmute</div>
+    </div>
 </div>
 
-<!-- Scripts en orden correcto -->
 <script src="/socket.io/socket.io.js"></script>
 <script>
-    // Configuración global
-    window.gameConfig = {
-        audioEnabled: true,
-        autoStartAudio: true,
-        showWelcomeMessage: true
-    };
-
-    // Función para mostrar notificaciones
-    window.showNotification = function(message, type = 'success', duration = 4000) {
-        const notification = document.createElement('div');
-        notification.className = type === 'error' ? 'error-message' : 'success-message';
-        notification.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                color: white;
-                padding: 15px 20px;
-                border-radius: 8px;
-                font-size: 14px;
-                z-index: 10000;
-                max-width: 300px;
-                animation: slideIn 0.3s ease;
-            `;
-        notification.textContent = message;
-
-        document.body.appendChild(notification);
-
-        setTimeout(() => {
-            notification.style.animation = 'slideOut 0.3s ease';
-            setTimeout(() => notification.remove(), 300);
-        }, duration);
-    };
-
     // Función para pantalla completa
     function toggleFullscreen() {
+        const container = document.getElementById('gameContainer');
+
         if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen().catch(err => {
-                console.log('Error entering fullscreen:', err);
+            container.requestFullscreen().then(() => {
+                // Redimensionar canvas en fullscreen
+                resizeCanvas();
+                document.getElementById('fullscreenBtn').textContent = '🗗 Salir Pantalla Completa';
+            }).catch(err => {
+                console.error('Error entering fullscreen:', err);
             });
         } else {
-            document.exitFullscreen();
+            document.exitFullscreen().then(() => {
+                resizeCanvas();
+                document.getElementById('fullscreenBtn').textContent = '🔳 Pantalla Completa';
+            });
         }
     }
 
-    // Event listeners para pantalla completa
-    document.addEventListener('DOMContentLoaded', () => {
-        const fullscreenBtn = document.getElementById('fullscreenBtn');
-        if (fullscreenBtn) {
-            fullscreenBtn.addEventListener('click', toggleFullscreen);
+    // Redimensionar canvas dinámicamente
+    function resizeCanvas() {
+        const canvas = document.getElementById('gameCanvas');
+        const container = document.getElementById('gameContainer');
+
+        canvas.width = container.clientWidth;
+        canvas.height = container.clientHeight;
+
+        // Notificar al juego sobre el cambio de tamaño
+        if (window.game && window.game.handleResize) {
+            window.game.handleResize();
         }
+    }
 
-        // Ocultar indicador de carga después de un tiempo
-        setTimeout(() => {
-            const loadingIndicator = document.getElementById('loadingIndicator');
-            if (loadingIndicator) {
-                loadingIndicator.style.opacity = '0';
-                setTimeout(() => loadingIndicator.remove(), 500);
-            }
-
-            // Mostrar mensaje de bienvenida
-            if (window.gameConfig.showWelcomeMessage) {
-                const welcome = document.createElement('div');
-                welcome.id = 'welcomeNotification';
-                welcome.innerHTML = '🎮 ¡Bienvenido a Battle City! 🎙️ El chat de voz se activará automáticamente';
-                document.body.appendChild(welcome);
-
-                setTimeout(() => {
-                    welcome.style.animation = 'slideDown 0.5s ease reverse';
-                    setTimeout(() => welcome.remove(), 500);
-                }, 5000);
-            }
-        }, 2000);
-    });
-
-    // Manejo de errores globales
-    window.addEventListener('error', (event) => {
-        console.error('Error global:', event.error);
-        showNotification('Error en la aplicación: ' + event.error.message, 'error');
-    });
-
-    // Detectar cuando el juego pierde el foco
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden) {
-            console.log('🔍 Juego en segundo plano');
+    // Toggle del panel de audio
+    document.getElementById('togglePanel').addEventListener('click', () => {
+        const panel = document.getElementById('audioPanel');
+        if (panel.style.display === 'none') {
+            panel.style.display = 'block';
         } else {
-            console.log('🔍 Juego en primer plano');
+            panel.style.display = 'none';
         }
     });
-</script>
 
+    // Controles de volumen
+    document.getElementById('volumeSlider').addEventListener('input', (e) => {
+        if (window.audioManager) {
+            window.audioManager.setVolume(e.target.value / 100);
+        }
+    });
+
+    document.getElementById('micSlider').addEventListener('input', (e) => {
+        if (window.audioManager) {
+            window.audioManager.setMicVolume(e.target.value / 100);
+        }
+    });
+
+    // Redimensionar en cambios de orientación
+    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('orientationchange', () => {
+        setTimeout(resizeCanvas, 100);
+    });
+
+    // Redimensionar al cargar
+    window.addEventListener('load', resizeCanvas);
+</script>
 <script src="audio.js"></script>
 <script src="controls.js"></script>
 <script src="game.js"></script>
-
-<script>
-    // Inicialización adicional después de cargar todos los scripts
-    window.addEventListener('load', () => {
-        console.log('🚀 Battle City cargado completamente');
-
-        // Verificar soporte de audio
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            showNotification('Tu navegador no soporta chat de voz', 'error', 8000);
-        }
-    });
-</script>
 </body>
 </html>

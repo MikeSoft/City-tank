@@ -1,32 +1,8 @@
-// Enhanced connection configuration in game.js
 class Game {
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
-
-        // Enhanced Socket.IO connection with fallbacks
-        this.socket = io({
-            // Connection options
-            transports: ['websocket', 'polling'], // Allow fallback to polling
-            upgrade: true, // Allow upgrade from polling to websocket
-            timeout: 20000, // 20 seconds timeout
-            forceNew: true, // Force new connection
-
-            // Reconnection configuration
-            reconnection: true,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
-            maxReconnectionAttempts: 5,
-
-            // Additional options for proxy/network issues
-            autoConnect: true,
-            pingTimeout: 60000,
-            pingInterval: 25000
-        });
-
-        // Connection monitoring
-        this.connectionState = 'connecting';
-        this.reconnectionAttempts = 0;
+        this.socket = io();
 
         this.players = new Map();
         this.bullets = new Map();
@@ -35,255 +11,60 @@ class Game {
         this.keys = {};
         this.lastShoot = 0;
         this.shootCooldown = 500;
-        this.playerAudioStates = new Map();
 
-        // Audio setup
-        this.audio = null;
-        this.audioInitialized = false;
+        // Configuración dinámica del mundo
+        this.worldWidth = 1200;
+        this.worldHeight = 800;
+        this.camera = {x: 0, y: 0};
+        this.scale = 1;
 
-        this.setupEnhancedSocketEvents();
+        this.setupSocketEvents();
         this.setupControls();
+        this.handleResize();
         this.startGameLoop();
 
-        // Initialize audio after a short delay to ensure socket is connected
-        setTimeout(() => {
-            this.initAudioWhenReady();
-        }, 1000);
+        // Iniciar audio
+        this.audio = new AudioManager(this.socket);
+
+        // Exponer para redimensionamiento
+        window.game = this;
     }
 
-    async initAudioWhenReady() {
-        if (this.audioInitialized || !this.socket.connected) {
-            return;
+    handleResize() {
+        const container = document.getElementById('gameContainer');
+        this.canvas.width = container.clientWidth;
+        this.canvas.height = container.clientHeight;
+
+        // Calcular escala para mantener proporciones del juego
+        const scaleX = this.canvas.width / this.worldWidth;
+        const scaleY = this.canvas.height / this.worldHeight;
+        this.scale = Math.min(scaleX, scaleY);
+
+        // Centrar cámara si es necesario
+        this.updateCamera();
+
+        console.log(`Canvas resized to: ${this.canvas.width}x${this.canvas.height}, scale: ${this.scale}`);
+    }
+
+    updateCamera() {
+        const myPlayer = this.players.get(this.myPlayerId);
+        if (myPlayer) {
+            // Seguir al jugador con la cámara
+            this.camera.x = myPlayer.x - (this.canvas.width / this.scale) / 2;
+            this.camera.y = myPlayer.y - (this.canvas.height / this.scale) / 2;
+
+            // Limitar cámara a los bordes del mundo
+            this.camera.x = Math.max(0, Math.min(this.worldWidth - this.canvas.width / this.scale, this.camera.x));
+            this.camera.y = Math.max(0, Math.min(this.worldHeight - this.canvas.height / this.scale, this.camera.y));
         }
-
-        try {
-            console.log('🎙️ Inicializando sistema de audio...');
-
-            // Mostrar mensaje al usuario
-            this.showAudioInitMessage();
-
-            // Esperar a que el usuario haga clic para activar audio (requerido por navegadores)
-            await this.waitForUserInteraction();
-
-            // Crear AudioManager
-            this.audio = new AudioManager(this.socket);
-            this.audioInitialized = true;
-
-            console.log('✅ Audio inicializado correctamente');
-
-        } catch (error) {
-            console.error('❌ Error inicializando audio:', error);
-            this.showAudioError(error.message);
-        }
     }
 
-    // Mostrar mensaje para activar audio
-    showAudioInitMessage() {
-        const messageDiv = document.createElement('div');
-        messageDiv.id = 'audioInitMessage';
-        messageDiv.style.cssText = `
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(0, 150, 0, 0.95);
-            color: white;
-            padding: 25px;
-            border-radius: 15px;
-            text-align: center;
-            z-index: 10000;
-            max-width: 400px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-        `;
-
-        messageDiv.innerHTML = `
-            <h3>🎙️ Chat de Voz Activado</h3>
-            <p>Haz clic en cualquier lugar para activar el chat de voz y poder hablar con otros jugadores.</p>
-            <div style="margin-top: 15px;">
-                <button id="activateAudioBtn" style="
-                    padding: 12px 25px;
-                    background: white;
-                    color: green;
-                    border: none;
-                    border-radius: 8px;
-                    cursor: pointer;
-                    font-size: 16px;
-                    font-weight: bold;
-                ">🎤 Activar Audio</button>
-            </div>
-            <p style="font-size: 12px; margin-top: 10px; opacity: 0.8;">
-                El navegador solicitará permiso para usar tu micrófono
-            </p>
-        `;
-
-        document.body.appendChild(messageDiv);
-    }
-
-    // Esperar interacción del usuario para activar audio
-    waitForUserInteraction() {
-        return new Promise((resolve) => {
-            const messageDiv = document.getElementById('audioInitMessage');
-            const activateBtn = document.getElementById('activateAudioBtn');
-
-            const handleInteraction = () => {
-                if (messageDiv) {
-                    messageDiv.remove();
-                }
-                document.removeEventListener('click', handleInteraction);
-                document.removeEventListener('touchstart', handleInteraction);
-                resolve();
-            };
-
-            // Botón específico
-            if (activateBtn) {
-                activateBtn.addEventListener('click', handleInteraction);
-            }
-
-            // También cualquier clic en el documento
-            document.addEventListener('click', handleInteraction);
-            document.addEventListener('touchstart', handleInteraction);
-        });
-    }
-
-    // Mostrar error de audio
-    showAudioError(errorMessage) {
-        const errorDiv = document.createElement('div');
-        errorDiv.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: rgba(255, 0, 0, 0.9);
-            color: white;
-            padding: 15px;
-            border-radius: 8px;
-            z-index: 10000;
-            max-width: 300px;
-        `;
-
-        errorDiv.innerHTML = `
-            <h4>❌ Error de Audio</h4>
-            <p>${errorMessage}</p>
-            <button onclick="this.parentElement.remove()" style="
-                background: white;
-                color: red;
-                border: none;
-                padding: 5px 10px;
-                border-radius: 4px;
-                cursor: pointer;
-                margin-top: 10px;
-            ">Cerrar</button>
-        `;
-
-        document.body.appendChild(errorDiv);
-
-        // Auto-remove after 10 seconds
-        setTimeout(() => {
-            if (errorDiv.parentNode) {
-                errorDiv.remove();
-            }
-        }, 10000);
-    }
-
-    tryAlternativeConnection() {
-        // Try different transports
-        setTimeout(() => {
-            if (this.socket.disconnected) {
-                console.log('🔄 Intentando conexión alternativa...');
-
-                // Disconnect and try with different config
-                this.socket.disconnect();
-
-                // Create new socket with polling only
-                this.socket = io({
-                    transports: ['polling'], // Force polling transport
-                    upgrade: false, // Don't upgrade to websocket
-                    timeout: 30000
-                });
-
-                this.setupEnhancedSocketEvents();
-            }
-        }, 2000);
-    }
-
-    setupEnhancedSocketEvents() {
-        // Connection success
+    setupSocketEvents() {
         this.socket.on('connect', () => {
-            console.log('🔗 Conectado al servidor');
+            console.log('Conectado al servidor');
             this.myPlayerId = this.socket.id;
-            this.connectionState = 'connected';
-            this.reconnectionAttempts = 0;
-            this.updateConnectionStatus();
-
-            // Intentar inicializar audio cuando se conecte
-            if (!this.audioInitialized) {
-                setTimeout(() => {
-                    this.initAudioWhenReady();
-                }, 1500);
-            }
         });
 
-        // Connection error handling
-        this.socket.on('connect_error', (error) => {
-            console.error('❌ Error de conexión:', error);
-            this.connectionState = 'error';
-            this.updateConnectionStatus();
-
-            // Try alternative connection methods
-            this.tryAlternativeConnection();
-        });
-
-        // Disconnection handling
-        this.socket.on('disconnect', (reason) => {
-            console.log('❌ Desconectado del servidor:', reason);
-            this.connectionState = 'disconnected';
-            this.updateConnectionStatus();
-
-            if (this.audio) {
-                this.audio.destroy();
-                this.audio = null;
-                this.audioInitialized = false;
-            }
-
-            // Handle different disconnect reasons
-            if (reason === 'io server disconnect') {
-                // Server disconnected this client, need to reconnect manually
-                this.socket.connect();
-            }
-        });
-
-        // Reconnection events
-        this.socket.on('reconnect', (attemptNumber) => {
-            console.log(`🔄 Reconectado después de ${attemptNumber} intentos`);
-            this.connectionState = 'connected';
-            this.updateConnectionStatus();
-
-            // Reinitialize audio after reconnection
-            if (!this.audioInitialized) {
-                setTimeout(() => {
-                    this.initAudioWhenReady();
-                }, 1000);
-            }
-        });
-
-        this.socket.on('reconnect_attempt', (attemptNumber) => {
-            console.log(`🔄 Intento de reconexión #${attemptNumber}`);
-            this.connectionState = 'reconnecting';
-            this.reconnectionAttempts = attemptNumber;
-            this.updateConnectionStatus();
-        });
-
-        this.socket.on('reconnect_error', (error) => {
-            console.error('❌ Error de reconexión:', error);
-        });
-
-        this.socket.on('reconnect_failed', () => {
-            console.error('❌ Falló la reconexión');
-            this.connectionState = 'failed';
-            this.updateConnectionStatus();
-            this.showConnectionError();
-        });
-
-        // Game events (existing code...)
         this.socket.on('gameState', (state) => {
             state.players.forEach(player => {
                 this.players.set(player.id, player);
@@ -297,7 +78,6 @@ class Game {
         this.socket.on('playerJoined', (player) => {
             this.players.set(player.id, player);
             this.updatePlayerCount();
-            console.log(`👋 ${player.name} se unió al juego`);
         });
 
         this.socket.on('playerMoved', (data) => {
@@ -310,12 +90,7 @@ class Game {
         });
 
         this.socket.on('playerLeft', (playerId) => {
-            const player = this.players.get(playerId);
-            if (player) {
-                console.log(`👋 ${player.name} abandonó el juego`);
-            }
             this.players.delete(playerId);
-            this.playerAudioStates.delete(playerId);
             this.updatePlayerCount();
         });
 
@@ -325,19 +100,6 @@ class Game {
 
         this.socket.on('bulletDestroyed', (bulletId) => {
             this.bullets.delete(bulletId);
-        });
-
-        // Eventos de audio
-        this.socket.on('playerAudioState', (data) => {
-            this.playerAudioStates.set(data.playerId, {
-                audioEnabled: data.audioEnabled,
-                lastUpdate: Date.now()
-            });
-        });
-
-        // Debug de conexión
-        this.socket.on('connect_error', (error) => {
-            console.error('❌ Error de conexión:', error);
         });
     }
 
@@ -350,91 +112,17 @@ class Game {
                 e.preventDefault();
                 this.shoot();
             }
-
-            // Tecla M para mutear/desmutear
-            if (e.code === 'KeyM') {
-                e.preventDefault();
-                if (this.audio) {
-                    this.audio.toggleMute();
-                }
-            }
-
-            // Tecla T para activar/desactivar micrófono
-            if (e.code === 'KeyT') {
-                e.preventDefault();
-                if (this.audio) {
-                    this.audio.toggleMicrophone();
-                } else {
-                    // Si el audio no está inicializado, intentar inicializarlo
-                    this.initAudioWhenReady();
-                }
-            }
-
-            // Tecla V para push-to-talk
-            if (e.code === 'KeyV') {
-                e.preventDefault();
-                if (this.audio) {
-                    this.audio.startTransmitting();
-                }
-            }
         });
 
         document.addEventListener('keyup', (e) => {
             this.keys[e.code] = false;
-
-            // Soltar V para dejar de hablar (push-to-talk)
-            if (e.code === 'KeyV') {
-                e.preventDefault();
-                if (this.audio) {
-                    this.audio.stopTransmitting();
-                }
-            }
         });
 
-        // Controles móviles se manejan en controls.js
+        // Controles móviles
         window.mobileControls = {
             move: {x: 0, y: 0},
             shoot: false
         };
-
-        // Mostrar controles en pantalla
-        this.showControls();
-    }
-
-    showControls() {
-        // Crear elemento de ayuda de controles
-        const controlsHelp = document.createElement('div');
-        controlsHelp.id = 'controlsHelp';
-        controlsHelp.style.cssText = `
-            position: absolute;
-            bottom: 10px;
-            left: 10px;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            padding: 8px;
-            border-radius: 5px;
-            font-size: 11px;
-            z-index: 999;
-        `;
-
-        controlsHelp.innerHTML = `
-            <div><strong>🎮 Controles:</strong></div>
-            <div>WASD/Flechas: Mover</div>
-            <div>Espacio: Disparar</div>
-            <div><strong>🎙️ Audio:</strong></div>
-            <div>T: Toggle Micrófono</div>
-            <div>V: Push-to-Talk</div>
-            <div>M: Mute/Unmute</div>
-        `;
-
-        document.getElementById('gameContainer').appendChild(controlsHelp);
-
-        // Ocultar después de 15 segundos
-        setTimeout(() => {
-            if (controlsHelp.parentNode) {
-                controlsHelp.style.opacity = '0.3';
-            }
-        }, 15000);
     }
 
     update() {
@@ -464,11 +152,22 @@ class Game {
 
         // Calcular movimiento
         if (moveX !== 0 || moveY !== 0) {
-            const speed = 100; // pixels por segundo
-            const deltaTime = 1 / 60; // asumiendo 60 FPS
+            const speed = 150;
+            const deltaTime = 1 / 60;
 
-            myPlayer.x += moveX * speed * deltaTime;
-            myPlayer.y += moveY * speed * deltaTime;
+            // Normalizar movimiento diagonal
+            const magnitude = Math.sqrt(moveX * moveX + moveY * moveY);
+            if (magnitude > 1) {
+                moveX /= magnitude;
+                moveY /= magnitude;
+            }
+
+            const newX = myPlayer.x + moveX * speed * deltaTime;
+            const newY = myPlayer.y + moveY * speed * deltaTime;
+
+            // Limitar al mundo
+            myPlayer.x = Math.max(20, Math.min(this.worldWidth - 20, newX));
+            myPlayer.y = Math.max(20, Math.min(this.worldHeight - 20, newY));
 
             // Calcular ángulo de rotación
             newAngle = Math.atan2(moveY, moveX) * 180 / Math.PI;
@@ -482,23 +181,14 @@ class Game {
             });
         }
 
+        // Actualizar cámara
+        this.updateCamera();
+
         // Actualizar bullets
         this.bullets.forEach((bullet) => {
             const radians = bullet.angle * Math.PI / 180;
             bullet.x += Math.cos(radians) * bullet.speed * (1 / 60);
             bullet.y += Math.sin(radians) * bullet.speed * (1 / 60);
-        });
-
-        // Limpiar estados de audio antiguos
-        this.cleanupAudioStates();
-    }
-
-    cleanupAudioStates() {
-        const now = Date.now();
-        this.playerAudioStates.forEach((state, playerId) => {
-            if (now - state.lastUpdate > 10000) { // 10 segundos
-                this.playerAudioStates.delete(playerId);
-            }
         });
     }
 
@@ -512,8 +202,16 @@ class Game {
 
     render() {
         // Limpiar canvas
-        this.ctx.fillStyle = '#1a1a1a';
+        this.ctx.fillStyle = '#1a2a1a';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // Aplicar transformación de cámara
+        this.ctx.save();
+        this.ctx.scale(this.scale, this.scale);
+        this.ctx.translate(-this.camera.x, -this.camera.y);
+
+        // Dibujar fondo del mundo
+        this.drawWorldBackground();
 
         // Dibujar tanques
         this.players.forEach((player) => {
@@ -525,8 +223,43 @@ class Game {
             this.drawBullet(bullet);
         });
 
-        // Dibujar indicadores de conexión
-        this.drawConnectionStatus();
+        // Dibujar límites del mundo
+        this.drawWorldBorders();
+
+        this.ctx.restore();
+
+        // Dibujar UI (sin transformación de cámara)
+        this.drawUI();
+    }
+
+    drawWorldBackground() {
+        // Fondo con patrón de grid
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+        this.ctx.lineWidth = 1;
+
+        const gridSize = 50;
+
+        // Líneas verticales
+        for (let x = 0; x <= this.worldWidth; x += gridSize) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(x, 0);
+            this.ctx.lineTo(x, this.worldHeight);
+            this.ctx.stroke();
+        }
+
+        // Líneas horizontales
+        for (let y = 0; y <= this.worldHeight; y += gridSize) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(0, y);
+            this.ctx.lineTo(this.worldWidth, y);
+            this.ctx.stroke();
+        }
+    }
+
+    drawWorldBorders() {
+        this.ctx.strokeStyle = '#ff4444';
+        this.ctx.lineWidth = 3;
+        this.ctx.strokeRect(0, 0, this.worldWidth, this.worldHeight);
     }
 
     drawTank(player) {
@@ -536,29 +269,39 @@ class Game {
         ctx.translate(player.x, player.y);
         ctx.rotate(player.angle * Math.PI / 180);
 
+        // Sombra
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.fillRect(-13, -8, 26, 16);
+
         // Cuerpo del tanque
         ctx.fillStyle = player.color;
         ctx.fillRect(-15, -10, 30, 20);
+
+        // Detalles del tanque
+        ctx.fillStyle = this.lightenColor(player.color, 20);
+        ctx.fillRect(-15, -10, 30, 4);
+        ctx.fillRect(-15, 6, 30, 4);
 
         // Cañón
         ctx.fillStyle = '#666';
         ctx.fillRect(15, -2, 20, 4);
 
+        // Torre
+        ctx.fillStyle = this.darkenColor(player.color, 20);
+        ctx.beginPath();
+        ctx.arc(0, 0, 12, 0, Math.PI * 2);
+        ctx.fill();
+
         ctx.restore();
 
         // Nombre del jugador
         ctx.fillStyle = 'white';
-        ctx.font = '12px Arial';
+        ctx.font = '14px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText(player.name, player.x, player.y - 25);
-
-        // Indicador de audio
-        const audioState = this.playerAudioStates.get(player.id);
-        if (audioState && audioState.audioEnabled) {
-            ctx.fillStyle = '#00ff00';
-            ctx.font = '16px Arial';
-            ctx.fillText('🎤', player.x + 25, player.y - 15);
-        }
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 3;
+        ctx.strokeText(player.name, player.x, player.y - 30);
+        ctx.fillText(player.name, player.x, player.y - 30);
 
         // Indicador si es el jugador local
         if (player.id === this.myPlayerId) {
@@ -568,38 +311,109 @@ class Game {
             ctx.arc(player.x, player.y, 25, 0, Math.PI * 2);
             ctx.stroke();
         }
+
+        // Barra de vida
+        this.drawHealthBar(player);
+    }
+
+    drawHealthBar(player) {
+        const ctx = this.ctx;
+        const barWidth = 30;
+        const barHeight = 4;
+        const x = player.x - barWidth / 2;
+        const y = player.y - 40;
+
+        // Fondo de la barra
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+        ctx.fillRect(x, y, barWidth, barHeight);
+
+        // Vida actual
+        const healthPercent = player.health / 100;
+        ctx.fillStyle = healthPercent > 0.5 ? '#4CAF50' : healthPercent > 0.25 ? '#ff9800' : '#f44336';
+        ctx.fillRect(x, y, barWidth * healthPercent, barHeight);
+
+        // Borde
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, barWidth, barHeight);
     }
 
     drawBullet(bullet) {
         this.ctx.fillStyle = '#ffff00';
+        this.ctx.strokeStyle = '#ffaa00';
+        this.ctx.lineWidth = 1;
         this.ctx.beginPath();
         this.ctx.arc(bullet.x, bullet.y, 3, 0, Math.PI * 2);
         this.ctx.fill();
+        this.ctx.stroke();
     }
 
-    drawConnectionStatus() {
-        const ctx = this.ctx;
+    drawUI() {
+        // Minimapa
+        this.drawMinimap();
+    }
 
-        // Estado de conexión
-        const connected = this.socket.connected;
-        ctx.fillStyle = connected ? '#00ff00' : '#ff0000';
-        ctx.beginPath();
-        ctx.arc(this.canvas.width - 20, 20, 5, 0, Math.PI * 2);
-        ctx.fill();
+    drawMinimap() {
+        const minimapSize = 150;
+        const minimapX = this.canvas.width - minimapSize - 20;
+        const minimapY = this.canvas.height - minimapSize - 20;
 
-        // Estado de audio
-        if (this.audio && this.audio.isInitialized) {
-            ctx.fillStyle = this.audio.isTransmitting ? '#00ff00' : '#ff6600';
-            ctx.beginPath();
-            ctx.arc(this.canvas.width - 40, 20, 5, 0, Math.PI * 2);
-            ctx.fill();
-        } else {
-            // Audio no inicializado
-            ctx.fillStyle = '#888888';
-            ctx.beginPath();
-            ctx.arc(this.canvas.width - 40, 20, 5, 0, Math.PI * 2);
-            ctx.fill();
-        }
+        // Fondo del minimapa
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        this.ctx.fillRect(minimapX, minimapY, minimapSize, minimapSize);
+
+        // Borde
+        this.ctx.strokeStyle = 'white';
+        this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(minimapX, minimapY, minimapSize, minimapSize);
+
+        // Escala del minimapa
+        const scaleX = minimapSize / this.worldWidth;
+        const scaleY = minimapSize / this.worldHeight;
+
+        // Dibujar jugadores en el minimapa
+        this.players.forEach((player) => {
+            const x = minimapX + player.x * scaleX;
+            const y = minimapY + player.y * scaleY;
+
+            this.ctx.fillStyle = player.id === this.myPlayerId ? '#00ff00' : player.color;
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, 3, 0, Math.PI * 2);
+            this.ctx.fill();
+        });
+
+        // Mostrar área visible de la cámara
+        const cameraX = minimapX + this.camera.x * scaleX;
+        const cameraY = minimapY + this.camera.y * scaleY;
+        const cameraW = (this.canvas.width / this.scale) * scaleX;
+        const cameraH = (this.canvas.height / this.scale) * scaleY;
+
+        this.ctx.strokeStyle = 'yellow';
+        this.ctx.lineWidth = 1;
+        this.ctx.strokeRect(cameraX, cameraY, cameraW, cameraH);
+    }
+
+    // Utilidades de color
+    lightenColor(color, percent) {
+        const num = parseInt(color.replace("#", ""), 16);
+        const amt = Math.round(2.55 * percent);
+        const R = (num >> 16) + amt;
+        const G = (num >> 8 & 0x00FF) + amt;
+        const B = (num & 0x0000FF) + amt;
+        return "#" + (0x1000000 + (R < 255 ? R < 1 ? 0 : R : 255) * 0x10000 +
+            (G < 255 ? G < 1 ? 0 : G : 255) * 0x100 +
+            (B < 255 ? B < 1 ? 0 : B : 255)).toString(16).slice(1);
+    }
+
+    darkenColor(color, percent) {
+        const num = parseInt(color.replace("#", ""), 16);
+        const amt = Math.round(2.55 * percent);
+        const R = (num >> 16) - amt;
+        const G = (num >> 8 & 0x00FF) - amt;
+        const B = (num & 0x0000FF) - amt;
+        return "#" + (0x1000000 + (R > 255 ? 255 : R < 0 ? 0 : R) * 0x10000 +
+            (G > 255 ? 255 : G < 0 ? 0 : G) * 0x100 +
+            (B > 255 ? 255 : B < 0 ? 0 : B)).toString(16).slice(1);
     }
 
     updatePlayerCount() {
@@ -632,117 +446,9 @@ class Game {
 
         requestAnimationFrame(gameLoop);
     }
-
-    // Cleanup al cerrar
-    destroy() {
-        if (this.audio) {
-            this.audio.destroy();
-        }
-        this.socket.disconnect();
-    }
-
-    updateConnectionStatus() {
-        const statusElement = this.getOrCreateStatusElement();
-
-        switch (this.connectionState) {
-            case 'connecting':
-                statusElement.textContent = '🔄 Conectando...';
-                statusElement.style.color = '#FFA500';
-                break;
-            case 'connected':
-                statusElement.textContent = '🔗 Conectado';
-                statusElement.style.color = '#00FF00';
-                break;
-            case 'reconnecting':
-                statusElement.textContent = `🔄 Reconectando... (${this.reconnectionAttempts})`;
-                statusElement.style.color = '#FFA500';
-                break;
-            case 'disconnected':
-                statusElement.textContent = '❌ Desconectado';
-                statusElement.style.color = '#FF6600';
-                break;
-            case 'error':
-                statusElement.textContent = '❌ Error de conexión';
-                statusElement.style.color = '#FF0000';
-                break;
-            case 'failed':
-                statusElement.textContent = '❌ Conexión fallida';
-                statusElement.style.color = '#FF0000';
-                break;
-        }
-    }
-
-    getOrCreateStatusElement() {
-        let statusElement = document.getElementById('connectionStatus');
-        if (!statusElement) {
-            statusElement = document.createElement('div');
-            statusElement.id = 'connectionStatus';
-            statusElement.style.cssText = `
-                position: absolute;
-                top: 50px;
-                left: 10px;
-                color: white;
-                font-size: 14px;
-                font-weight: bold;
-                z-index: 1000;
-            `;
-            document.getElementById('gameContainer').appendChild(statusElement);
-        }
-        return statusElement;
-    }
-
-    showConnectionError() {
-        const errorDiv = document.createElement('div');
-        errorDiv.style.cssText = `
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(255, 0, 0, 0.9);
-            color: white;
-            padding: 20px;
-            border-radius: 10px;
-            text-align: center;
-            z-index: 10000;
-            max-width: 400px;
-        `;
-
-        errorDiv.innerHTML = `
-            <h3>❌ Error de Conexión</h3>
-            <p>No se pudo conectar al servidor. Posibles causas:</p>
-            <ul style="text-align: left;">
-                <li>Servidor no disponible</li>
-                <li>Problemas de proxy/firewall</li>
-                <li>Conexión de red inestable</li>
-            </ul>
-            <button onclick="location.reload()" style="
-                padding: 10px 20px;
-                background: white;
-                color: red;
-                border: none;
-                border-radius: 5px;
-                cursor: pointer;
-                margin-top: 10px;
-            ">Reintentar</button>
-        `;
-
-        document.body.appendChild(errorDiv);
-
-        // Remove after 10 seconds
-        setTimeout(() => {
-            if (errorDiv.parentNode) {
-                errorDiv.parentNode.removeChild(errorDiv);
-            }
-        }, 10000);
-    }
 }
 
 // Inicializar juego cuando se carga la página
 window.addEventListener('load', () => {
-    const game = new Game();
-
-    // Cleanup al cerrar la página
-    window.addEventListener('beforeunload', () => {
-        game.destroy();
-    });
+    new Game();
 });
