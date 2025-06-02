@@ -24,6 +24,7 @@ class AudioManager {
         this.audioQueue = [];
         this.isPlaying = false;
 
+        // Auto inicializar
         this.createAudioUI();
         this.init();
     }
@@ -92,6 +93,11 @@ class AudioManager {
         try {
             this.updateStatus('Solicitando permisos...');
 
+            // Verificar soporte del navegador
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error('Tu navegador no soporta audio');
+            }
+
             // Crear contexto de audio optimizado
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
                 sampleRate: this.sampleRate,
@@ -108,7 +114,11 @@ class AudioManager {
                     noiseSuppression: true,
                     autoGainControl: false, // Desactivar para control manual
                     sampleRate: this.sampleRate,
-                    channelCount: this.channels
+                    channelCount: this.channels,
+                    // Configuraciones adicionales para mejor calidad
+                    googEchoCancellation: true,
+                    googNoiseSuppression: true,
+                    googHighpassFilter: true
                 }
             });
 
@@ -118,31 +128,72 @@ class AudioManager {
 
             this.isInitialized = true;
             this.updateStatus('✅ Conectado');
+
+            // AUTOMÁTICAMENTE activar transmisión
             this.startTransmitting();
+
+            // Notificar al servidor que el audio está activo
+            this.socket.emit('audioStateChanged', {enabled: true});
+
+            console.log('✅ Audio inicializado y transmitiendo automáticamente');
 
         } catch (error) {
             console.error('Error inicializando audio:', error);
-            this.updateStatus('❌ Error: ' + error.message);
+            this.handleAudioError(error);
         }
+    }
+
+    handleAudioError(error) {
+        let errorMessage = 'Error desconocido';
+
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+            errorMessage = 'Permiso de micrófono denegado. Activa el micrófono en la configuración del navegador.';
+        } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+            errorMessage = 'No se encontró micrófono. Conecta un micrófono y recarga la página.';
+        } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+            errorMessage = 'El micrófono está siendo usado por otra aplicación.';
+        } else if (error.name === 'OverconstrainedError') {
+            errorMessage = 'Configuración de audio no soportada por tu dispositivo.';
+        } else {
+            errorMessage = error.message || 'Error de audio';
+        }
+
+        this.updateStatus('❌ Error: ' + errorMessage);
+
+        // Mostrar botón para reintentar
+        this.showRetryButton();
+    }
+
+    showRetryButton() {
+        const retryBtn = document.createElement('button');
+        retryBtn.textContent = '🔄 Reintentar';
+        retryBtn.style.cssText = `
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 5px;
+        `;
+
+        retryBtn.onclick = () => {
+            retryBtn.remove();
+            this.init();
+        };
+
+        document.getElementById('audioUI').appendChild(retryBtn);
     }
 
     async resumeAudioContext() {
         if (this.audioContext.state === 'suspended') {
-            // Esperar interacción del usuario para reanudar
-            const resumeContext = async () => {
-                try {
-                    await this.audioContext.resume();
-                    document.removeEventListener('touchstart', resumeContext);
-                    document.removeEventListener('click', resumeContext);
-                } catch (error) {
-                    console.error('Error resumiendo contexto:', error);
-                }
-            };
-
-            document.addEventListener('touchstart', resumeContext, {once: true});
-            document.addEventListener('click', resumeContext, {once: true});
-
-            this.updateStatus('👆 Click para activar audio');
+            try {
+                await this.audioContext.resume();
+                console.log('✅ Contexto de audio reanudado');
+            } catch (error) {
+                console.error('Error reanudando contexto:', error);
+                // El contexto se reanudará automáticamente con la primera interacción
+            }
         }
     }
 
@@ -153,11 +204,17 @@ class AudioManager {
             this.gainNode = this.audioContext.createGain();
             this.gainNode.gain.value = this.micVolume;
 
-            // Usar ScriptProcessorNode para compatibilidad (AudioWorklet es mejor pero más complejo)
+            // Crear filtro pasa-altos para eliminar ruido de baja frecuencia
+            const highPassFilter = this.audioContext.createBiquadFilter();
+            highPassFilter.type = 'highpass';
+            highPassFilter.frequency.value = 300; // Eliminar frecuencias por debajo de 300Hz
+
+            // Usar ScriptProcessorNode para compatibilidad
             this.processor = this.audioContext.createScriptProcessor(this.bufferSize, this.channels, this.channels);
 
             // Conectar cadena de audio
-            source.connect(this.gainNode);
+            source.connect(highPassFilter);
+            highPassFilter.connect(this.gainNode);
             this.gainNode.connect(this.processor);
 
             // Procesar audio en tiempo real
@@ -165,9 +222,14 @@ class AudioManager {
                 if (!this.isTransmitting || this.isMuted) return;
 
                 const inputData = event.inputBuffer.getChannelData(0);
-                const audioData = new Float32Array(inputData);
 
-                // Enviar datos inmediatamente
+                // Detectar silencio para no enviar audio innecesario
+                const volume = this.calculateRMS(inputData);
+                if (volume < 0.01) { // Umbral de silencio
+                    return;
+                }
+
+                const audioData = new Float32Array(inputData);
                 this.sendAudioData(audioData);
             };
 
@@ -180,6 +242,15 @@ class AudioManager {
         }
     }
 
+    // Calcular RMS (volumen) del audio
+    calculateRMS(audioData) {
+        let sum = 0;
+        for (let i = 0; i < audioData.length; i++) {
+            sum += audioData[i] * audioData[i];
+        }
+        return Math.sqrt(sum / audioData.length);
+    }
+
     sendAudioData(audioData) {
         try {
             // Comprimir datos para reducir ancho de banda
@@ -187,7 +258,7 @@ class AudioManager {
 
             // Enviar via socket con timestamp para medir latencia
             this.socket.emit('audioStream', {
-                data: compressedData,
+                data: Array.from(compressedData), // Convertir a array para JSON
                 timestamp: Date.now(),
                 sampleRate: this.sampleRate
             });
@@ -219,18 +290,23 @@ class AudioManager {
 
     setupSocketEvents() {
         this.socket.on('audioStream', (data) => {
-            // Calcular latencia
-            const latency = Date.now() - data.timestamp;
-            document.getElementById('latency').textContent = latency;
+            // Calcular latencia si hay timestamp
+            if (data.timestamp) {
+                const latency = Date.now() - data.timestamp;
+                document.getElementById('latency').textContent = latency;
+            }
 
             // Reproducir audio inmediatamente
             this.playAudioStream(data);
         });
 
-        // Debug
+        // Debug de paquetes de audio
         let audioPackets = 0;
         setInterval(() => {
-            document.getElementById('audioDebug').textContent = `Packets/s: ${audioPackets}`;
+            const debugElement = document.getElementById('audioDebug');
+            if (debugElement) {
+                debugElement.textContent = `Packets/s: ${audioPackets}`;
+            }
             audioPackets = 0;
         }, 1000);
 
@@ -241,10 +317,25 @@ class AudioManager {
 
     async playAudioStream(audioData) {
         try {
-            if (!this.audioContext || this.audioContext.state !== 'running') return;
+            if (!this.audioContext || this.audioContext.state !== 'running') {
+                // Intentar reanudar el contexto
+                if (this.audioContext.state === 'suspended') {
+                    await this.audioContext.resume();
+                }
+                return;
+            }
+
+            // Asegurar que tenemos datos válidos
+            if (!audioData.data || audioData.data.length === 0) {
+                return;
+            }
 
             // Descomprimir datos
-            const decompressedData = this.decompressAudio(new Int16Array(audioData.data));
+            const compressedArray = Array.isArray(audioData.data) ?
+                new Int16Array(audioData.data) :
+                new Int16Array(audioData.data);
+
+            const decompressedData = this.decompressAudio(compressedArray);
 
             // Crear buffer de audio
             const audioBuffer = this.audioContext.createBuffer(
@@ -275,15 +366,30 @@ class AudioManager {
     }
 
     startTransmitting() {
+        if (!this.isInitialized) {
+            console.warn('Audio no inicializado');
+            return;
+        }
+
         this.isTransmitting = true;
         this.updateMicButton();
         this.updateStatus('🔴 Transmitiendo');
+
+        // Notificar al servidor
+        this.socket.emit('audioStateChanged', {enabled: true});
+
+        console.log('🎤 Micrófono activado');
     }
 
     stopTransmitting() {
         this.isTransmitting = false;
         this.updateMicButton();
         this.updateStatus('⏸️ Pausado');
+
+        // Notificar al servidor
+        this.socket.emit('audioStateChanged', {enabled: false});
+
+        console.log('🎤 Micrófono desactivado');
     }
 
     toggleMicrophone() {
@@ -297,13 +403,17 @@ class AudioManager {
     toggleMute() {
         this.isMuted = !this.isMuted;
         const button = document.getElementById('toggleMute');
-        button.textContent = this.isMuted ? '🔇' : '🔊';
+        if (button) {
+            button.textContent = this.isMuted ? '🔇' : '🔊';
+        }
 
         if (this.isMuted) {
             this.updateStatus('🔇 Silenciado');
         } else if (this.isTransmitting) {
             this.updateStatus('🔴 Transmitiendo');
         }
+
+        console.log(this.isMuted ? '🔇 Audio silenciado' : '🔊 Audio activado');
     }
 
     updateMicButton() {
@@ -311,6 +421,7 @@ class AudioManager {
         if (button) {
             button.textContent = this.isTransmitting ? '🎤 ON' : '🎤 OFF';
             button.style.background = this.isTransmitting ? '#4CAF50' : '#f44336';
+            button.style.color = 'white';
         }
     }
 
@@ -319,10 +430,13 @@ class AudioManager {
         if (element) {
             element.textContent = status;
         }
+        console.log('🎙️ Audio Status:', status);
     }
 
     // Limpiar recursos al salir
     destroy() {
+        console.log('🧹 Limpiando recursos de audio...');
+
         this.isTransmitting = false;
 
         if (this.processor) {
@@ -335,7 +449,10 @@ class AudioManager {
         }
 
         if (this.microphone) {
-            this.microphone.getTracks().forEach(track => track.stop());
+            this.microphone.getTracks().forEach(track => {
+                track.stop();
+                console.log('🛑 Track detenido:', track.kind);
+            });
         }
 
         if (this.audioContext && this.audioContext.state !== 'closed') {
@@ -346,5 +463,7 @@ class AudioManager {
         if (audioUI) {
             audioUI.remove();
         }
+
+        console.log('✅ Recursos de audio limpiados');
     }
 }

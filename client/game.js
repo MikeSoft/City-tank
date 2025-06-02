@@ -37,11 +37,151 @@ class Game {
         this.shootCooldown = 500;
         this.playerAudioStates = new Map();
 
+        // Audio setup
+        this.audio = null;
+        this.audioInitialized = false;
+
         this.setupEnhancedSocketEvents();
         this.setupControls();
         this.startGameLoop();
-        this.audio = null;
-        this.initAudioWhenReady();
+
+        // Initialize audio after a short delay to ensure socket is connected
+        setTimeout(() => {
+            this.initAudioWhenReady();
+        }, 1000);
+    }
+
+    async initAudioWhenReady() {
+        if (this.audioInitialized || !this.socket.connected) {
+            return;
+        }
+
+        try {
+            console.log('🎙️ Inicializando sistema de audio...');
+
+            // Mostrar mensaje al usuario
+            this.showAudioInitMessage();
+
+            // Esperar a que el usuario haga clic para activar audio (requerido por navegadores)
+            await this.waitForUserInteraction();
+
+            // Crear AudioManager
+            this.audio = new AudioManager(this.socket);
+            this.audioInitialized = true;
+
+            console.log('✅ Audio inicializado correctamente');
+
+        } catch (error) {
+            console.error('❌ Error inicializando audio:', error);
+            this.showAudioError(error.message);
+        }
+    }
+
+    // Mostrar mensaje para activar audio
+    showAudioInitMessage() {
+        const messageDiv = document.createElement('div');
+        messageDiv.id = 'audioInitMessage';
+        messageDiv.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 150, 0, 0.95);
+            color: white;
+            padding: 25px;
+            border-radius: 15px;
+            text-align: center;
+            z-index: 10000;
+            max-width: 400px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        `;
+
+        messageDiv.innerHTML = `
+            <h3>🎙️ Chat de Voz Activado</h3>
+            <p>Haz clic en cualquier lugar para activar el chat de voz y poder hablar con otros jugadores.</p>
+            <div style="margin-top: 15px;">
+                <button id="activateAudioBtn" style="
+                    padding: 12px 25px;
+                    background: white;
+                    color: green;
+                    border: none;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    font-size: 16px;
+                    font-weight: bold;
+                ">🎤 Activar Audio</button>
+            </div>
+            <p style="font-size: 12px; margin-top: 10px; opacity: 0.8;">
+                El navegador solicitará permiso para usar tu micrófono
+            </p>
+        `;
+
+        document.body.appendChild(messageDiv);
+    }
+
+    // Esperar interacción del usuario para activar audio
+    waitForUserInteraction() {
+        return new Promise((resolve) => {
+            const messageDiv = document.getElementById('audioInitMessage');
+            const activateBtn = document.getElementById('activateAudioBtn');
+
+            const handleInteraction = () => {
+                if (messageDiv) {
+                    messageDiv.remove();
+                }
+                document.removeEventListener('click', handleInteraction);
+                document.removeEventListener('touchstart', handleInteraction);
+                resolve();
+            };
+
+            // Botón específico
+            if (activateBtn) {
+                activateBtn.addEventListener('click', handleInteraction);
+            }
+
+            // También cualquier clic en el documento
+            document.addEventListener('click', handleInteraction);
+            document.addEventListener('touchstart', handleInteraction);
+        });
+    }
+
+    // Mostrar error de audio
+    showAudioError(errorMessage) {
+        const errorDiv = document.createElement('div');
+        errorDiv.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 0, 0, 0.9);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            z-index: 10000;
+            max-width: 300px;
+        `;
+
+        errorDiv.innerHTML = `
+            <h4>❌ Error de Audio</h4>
+            <p>${errorMessage}</p>
+            <button onclick="this.parentElement.remove()" style="
+                background: white;
+                color: red;
+                border: none;
+                padding: 5px 10px;
+                border-radius: 4px;
+                cursor: pointer;
+                margin-top: 10px;
+            ">Cerrar</button>
+        `;
+
+        document.body.appendChild(errorDiv);
+
+        // Auto-remove after 10 seconds
+        setTimeout(() => {
+            if (errorDiv.parentNode) {
+                errorDiv.remove();
+            }
+        }, 10000);
     }
 
     tryAlternativeConnection() {
@@ -73,6 +213,13 @@ class Game {
             this.connectionState = 'connected';
             this.reconnectionAttempts = 0;
             this.updateConnectionStatus();
+
+            // Intentar inicializar audio cuando se conecte
+            if (!this.audioInitialized) {
+                setTimeout(() => {
+                    this.initAudioWhenReady();
+                }, 1500);
+            }
         });
 
         // Connection error handling
@@ -93,6 +240,8 @@ class Game {
 
             if (this.audio) {
                 this.audio.destroy();
+                this.audio = null;
+                this.audioInitialized = false;
             }
 
             // Handle different disconnect reasons
@@ -107,6 +256,13 @@ class Game {
             console.log(`🔄 Reconectado después de ${attemptNumber} intentos`);
             this.connectionState = 'connected';
             this.updateConnectionStatus();
+
+            // Reinitialize audio after reconnection
+            if (!this.audioInitialized) {
+                setTimeout(() => {
+                    this.initAudioWhenReady();
+                }, 1000);
+            }
         });
 
         this.socket.on('reconnect_attempt', (attemptNumber) => {
@@ -208,12 +364,31 @@ class Game {
                 e.preventDefault();
                 if (this.audio) {
                     this.audio.toggleMicrophone();
+                } else {
+                    // Si el audio no está inicializado, intentar inicializarlo
+                    this.initAudioWhenReady();
+                }
+            }
+
+            // Tecla V para push-to-talk
+            if (e.code === 'KeyV') {
+                e.preventDefault();
+                if (this.audio) {
+                    this.audio.startTransmitting();
                 }
             }
         });
 
         document.addEventListener('keyup', (e) => {
             this.keys[e.code] = false;
+
+            // Soltar V para dejar de hablar (push-to-talk)
+            if (e.code === 'KeyV') {
+                e.preventDefault();
+                if (this.audio) {
+                    this.audio.stopTransmitting();
+                }
+            }
         });
 
         // Controles móviles se manejan en controls.js
@@ -248,17 +423,18 @@ class Game {
             <div>Espacio: Disparar</div>
             <div><strong>🎙️ Audio:</strong></div>
             <div>T: Toggle Micrófono</div>
+            <div>V: Push-to-Talk</div>
             <div>M: Mute/Unmute</div>
         `;
 
         document.getElementById('gameContainer').appendChild(controlsHelp);
 
-        // Ocultar después de 10 segundos
+        // Ocultar después de 15 segundos
         setTimeout(() => {
             if (controlsHelp.parentNode) {
                 controlsHelp.style.opacity = '0.3';
             }
-        }, 10000);
+        }, 15000);
     }
 
     update() {
@@ -417,6 +593,12 @@ class Game {
             ctx.beginPath();
             ctx.arc(this.canvas.width - 40, 20, 5, 0, Math.PI * 2);
             ctx.fill();
+        } else {
+            // Audio no inicializado
+            ctx.fillStyle = '#888888';
+            ctx.beginPath();
+            ctx.arc(this.canvas.width - 40, 20, 5, 0, Math.PI * 2);
+            ctx.fill();
         }
     }
 
@@ -554,7 +736,6 @@ class Game {
         }, 10000);
     }
 }
-
 
 // Inicializar juego cuando se carga la página
 window.addEventListener('load', () => {
