@@ -158,8 +158,8 @@ io.on('connection', (socket) => {
         const player = gameState.players.get(socket.id);
         if (player && data && typeof data.x === 'number' && typeof data.y === 'number') {
             // Validate movement bounds
-            player.x = Math.max(20, Math.min(780, data.x));
-            player.y = Math.max(20, Math.min(580, data.y));
+            player.x = Math.max(20, Math.min(800, data.x));
+            player.y = Math.max(20, Math.min(600, data.y));
             player.angle = data.angle || 0;
             player.lastActivity = Date.now();
 
@@ -300,10 +300,22 @@ setInterval(() => {
         const radians = bullet.angle * Math.PI / 180;
         bullet.x += Math.cos(radians) * bullet.speed * (1 / 60);
         bullet.y += Math.sin(radians) * bullet.speed * (1 / 60);
-
         if (bullet.x < 0 || bullet.x > 800 || bullet.y < 0 || bullet.y > 600) {
             gameState.bullets.delete(id);
             io.emit('bulletDestroyed', id);
+        } else {
+            gameState.players.forEach((player) => {
+                const dx = bullet.x - player.x;
+                const dy = bullet.y - player.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < 20) { // Assuming tank radius is 15
+                    if (player.id !== bullet.playerId) {
+                        io.emit('playerDamaged', {id: player.id, damage: 10});
+                        io.emit('bulletDestroyed', id);
+                        gameState.bullets.delete(id);
+                    }
+                }
+            });
         }
     });
 }, 1000 / 60);

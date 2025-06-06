@@ -13,8 +13,8 @@ class Game {
         this.shootCooldown = 500;
 
         // Configuración dinámica del mundo
-        this.worldWidth = 1200;
-        this.worldHeight = 800;
+        this.worldWidth = 800;
+        this.worldHeight = 600;
         this.camera = {x: 0, y: 0};
         this.scale = 1;
 
@@ -100,6 +100,19 @@ class Game {
 
         this.socket.on('bulletDestroyed', (bulletId) => {
             this.bullets.delete(bulletId);
+        });
+
+        this.socket.on('playerDamaged', (data) => {
+            const player = this.players.get(data.id);
+            if (player) {
+                player.health -= data.damage;
+                if (player.health <= 0) {
+                    this.players.delete(player.id);
+                    if (player.id === this.myPlayerId) {
+                        alert(`You have been destroyed!`);
+                    }
+                }
+            }
         });
     }
 
@@ -189,6 +202,22 @@ class Game {
             const radians = bullet.angle * Math.PI / 180;
             bullet.x += Math.cos(radians) * bullet.speed * (1 / 60);
             bullet.y += Math.sin(radians) * bullet.speed * (1 / 60);
+            const scaleWidth = this.worldWidth - 2 / this.scale;
+            const scaleHeight = this.worldHeight - 2 / this.scale;
+            // Limitar bullets al mundo
+            if (bullet.x < 0 || bullet.x > scaleWidth || bullet.y < 0 || bullet.y > scaleHeight) {
+                this.bullets.delete(bullet.id);
+            }
+            this.players.forEach((player) => {
+                const dx = bullet.x - player.x;
+                const dy = bullet.y - player.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < 20) { // Assuming tank radius is 15
+                    if (player.id !== bullet.playerId) {
+                        this.bullets.delete(bullet.id);
+                    }
+                }
+            });
         });
     }
 
@@ -300,8 +329,8 @@ class Game {
         ctx.textAlign = 'center';
         ctx.strokeStyle = 'black';
         ctx.lineWidth = 3;
-        ctx.strokeText(player.name, player.x, player.y - 30);
-        ctx.fillText(player.name, player.x, player.y - 30);
+        ctx.strokeText(player.name, player.x, player.y - 50);
+        ctx.fillText(player.name, player.x, player.y - 47);
 
         // Indicador si es el jugador local
         if (player.id === this.myPlayerId) {
@@ -343,7 +372,7 @@ class Game {
         this.ctx.strokeStyle = '#ffaa00';
         this.ctx.lineWidth = 1;
         this.ctx.beginPath();
-        this.ctx.arc(bullet.x, bullet.y, 3, 0, Math.PI * 2);
+        this.ctx.arc(bullet.x, bullet.y, 3, bullet.angle, Math.PI * 2);
         this.ctx.fill();
         this.ctx.stroke();
     }
