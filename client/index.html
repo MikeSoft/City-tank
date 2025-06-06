@@ -44,7 +44,7 @@
             left: 0;
             right: 0;
             height: 60px;
-            background: linear-gradient(180deg, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0.4) 70%, transparent 100%);
+            /*background: linear-gradient(180deg, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0.4) 70%, transparent 100%);*/
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
@@ -148,11 +148,11 @@
         /* Controles Móviles */
         #mobileControls {
             position: absolute;
-            bottom: 0;
+            bottom: 100px;
             left: 0;
             right: 0;
             height: 140px;
-            background: linear-gradient(0deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.3) 50%, transparent 100%);
+            /*background: linear-gradient(0deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.3) 50%, transparent 100%);*/
             display: none;
             justify-content: space-between;
             align-items: flex-end;
@@ -227,6 +227,15 @@
         #fullscreenBtn:hover {
             background: rgba(0, 0, 0, 0.9);
             transform: translateX(-50%) scale(1.05);
+        }
+
+        #pcControls {
+            position: absolute;
+            bottom: 250px;
+            left: 10px;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 11px;
+            z-index: 999;
         }
 
         /* Responsive Design */
@@ -391,8 +400,7 @@
     </div>
 
     <!-- Instrucciones para PC -->
-    <div id="pcControls"
-         style="position: absolute; bottom: 10px; left: 10px; color: rgba(255,255,255,0.7); font-size: 11px; z-index: 999;">
+    <div id="pcControls">
         <div><strong>Controles PC:</strong></div>
         <div>WASD/Flechas: Mover</div>
         <div>Espacio: Disparar</div>

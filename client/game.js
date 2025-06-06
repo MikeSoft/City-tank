@@ -63,9 +63,12 @@ class Game {
         this.socket.on('connect', () => {
             console.log('Conectado al servidor');
             this.myPlayerId = this.socket.id;
+            this.players.clear();
+            this.bullets.clear();
         });
 
         this.socket.on('gameState', (state) => {
+
             state.players.forEach(player => {
                 this.players.set(player.id, player);
             });
@@ -385,7 +388,7 @@ class Game {
     drawMinimap() {
         const minimapSize = 150;
         const minimapX = this.canvas.width - minimapSize - 20;
-        const minimapY = this.canvas.height - minimapSize - 20;
+        const minimapY = this.canvas.height - minimapSize - 200;
 
         // Fondo del minimapa
         this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
@@ -417,9 +420,9 @@ class Game {
         const cameraW = (this.canvas.width / this.scale) * scaleX;
         const cameraH = (this.canvas.height / this.scale) * scaleY;
 
-        this.ctx.strokeStyle = 'yellow';
-        this.ctx.lineWidth = 1;
-        this.ctx.strokeRect(cameraX, cameraY, cameraW, cameraH);
+        // this.ctx.strokeStyle = 'yellow';
+        // this.ctx.lineWidth = 1;
+        // this.ctx.strokeRect(cameraX, cameraY, cameraW, cameraH);
     }
 
     // Utilidades de color
